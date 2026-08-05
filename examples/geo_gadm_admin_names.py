@@ -1,21 +1,27 @@
-"""GADM administrative boundary name matching: local name vs English.
+"""GADM administrative boundary name matching: local name vs English/multilingual.
 
-Downloads GADM level-1 (states/provinces) for Germany, France, Italy,
-Spain, and Poland. Matches local-language names against English variants.
+Uses the GADM VARNAME_1 field (genuine alternative / English names) as the
+canonical right side, and the local NAME_1 as the noisy left side.
 
-GADM data: https://gadm.org/data.html (free for academic/non-commercial use)
-We use the GeoJSON simplified version (small files).
+Real matching challenges:
+  Bayern        → Bavaria
+  Niedersachsen → LowerSaxony
+  Thüringen     → Thuringia
+  Toscana       → Tuscany (Toscana → Toscane|Tuscany|Toskana)
+  Bretagne      → Brittany
+  Katalonia     → Catalonia
+  Andalucía     → Andalusia
 
 Run:
     python examples/geo_gadm_admin_names.py
 """
 from __future__ import annotations
-import io, json, urllib.request, zipfile
+import json, urllib.request
 from pathlib import Path
 import pandas as pd
+import geopandas as gpd
 from fuzzy_llm_matcher import match_tables
 
-# GADM level-1 GeoJSON for selected countries (small files ~100-300KB each)
 GADM_URLS = {
     "DEU": "https://geodata.ucdavis.edu/gadm/gadm4.1/json/gadm41_DEU_1.json",
     "FRA": "https://geodata.ucdavis.edu/gadm/gadm4.1/json/gadm41_FRA_1.json",
@@ -25,64 +31,86 @@ GADM_URLS = {
 }
 CACHE_DIR = Path("data/gadm_cache")
 
+# Hand-curated English names for regions where VARNAME_1 is missing (NA)
+MANUAL_EN = {
+    # France (VARNAME_1 mostly empty in GADM)
+    "Bretagne":                 "Brittany",
+    "Normandie":                "Normandy",
+    "Occitanie":                "Occitania",
+    "Provence-Alpes-CôtedAzur": "Provence-Alpes-Cote d'Azur",
+    "Île-de-France":            "Ile-de-France",
+    "GrandEst":                 "Grand Est",
+    "Centre-ValdeLoire":        "Centre-Val de Loire",
+    "Bourgogne-Franche-Comté":  "Bourgogne-Franche-Comte",
+    "Auvergne-Rhône-Alpes":     "Auvergne-Rhone-Alpes",
+    "HauvtssdeFrance":          "Hauts-de-France",
+    "Hauts-deFrance":           "Hauts-de-France",
+    # Poland (all Polish, VARNAME_1 empty)
+    "Dolnośląskie":    "Lower Silesian",
+    "Kujawsko-Pomorskie": "Kuyavian-Pomeranian",
+    "Łódzkie":         "Lodz",
+    "Małopolskie":     "Lesser Poland",
+    "Mazowieckie":     "Masovian",
+    "Opolskie":        "Opole",
+    "Podkarpackie":    "Subcarpathian",
+    "Podlaskie":       "Podlaskie",
+    "Pomorskie":       "Pomeranian",
+    "Śląskie":         "Silesian",
+    "Świętokrzyskie":  "Holy Cross",
+    "Warmińsko-Mazurskie": "Warmian-Masurian",
+    "Wielkopolskie":   "Greater Poland",
+    "Zachodniopomorskie": "West Pomeranian",
+    "Lubelskie":       "Lublin",
+    "Lubuskie":        "Lubusz",
+}
 
-def _fetch_gadm(country: str, url: str) -> list[dict]:
-    cache_file = CACHE_DIR / f"gadm41_{country}_1.json"
-    if cache_file.exists():
-        with open(cache_file) as f:
-            data = json.load(f)
-    else:
-        print(f"Downloading GADM {country}...")
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        try:
-            with urllib.request.urlopen(url, timeout=60) as r:
-                data = json.load(r)
-            with open(cache_file, "w") as f:
-                json.dump(data, f)
-        except Exception as e:
-            print(f"  Could not download {country}: {e}")
-            return []
+
+def _first_varname(varname_field: str) -> str | None:
+    """Extract the first entry from pipe/comma-separated VARNAME_1."""
+    if not varname_field or str(varname_field).strip() in ("NA", "nan", ""):
+        return None
+    # Take first pipe-separated variant, strip trailing pipe/space
+    first = str(varname_field).split("|")[0].strip().rstrip("|").strip()
+    # Insert spaces before uppercase letters that follow lowercase (CamelCase fix)
+    import re
+    first = re.sub(r'([a-z])([A-Z])', r'\1 \2', first)
+    return first if first else None
+
+
+def load_gadm_pairs() -> pd.DataFrame:
     rows = []
-    for feat in data.get("features", []):
-        props = feat.get("properties", {})
-        name_local = props.get("NAME_1") or props.get("VARNAME_1") or ""
-        name_en    = props.get("ENGTYPE_1") or ""
-        gid        = props.get("GID_1") or props.get("HASC_1") or ""
-        # Build English variant: "NAME_1, Country"
-        country_en = {"DEU":"Germany","FRA":"France","ITA":"Italy","ESP":"Spain","POL":"Poland"}.get(country, country)
-        full_local = name_local.strip()
-        full_en    = f"{name_local} ({country_en})".strip()
-        if full_local and full_local != full_en:
-            rows.append({"id": gid, "local_name": full_local, "en_name": full_en, "country": country})
-    return rows
+    for cc, url in GADM_URLS.items():
+        fp = CACHE_DIR / f"gadm41_{cc}_1.json"
+        if not fp.exists():
+            print(f"Downloading {cc}...")
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            with urllib.request.urlopen(url, timeout=60) as r:
+                fp.write_bytes(r.read())
+        gdf = gpd.read_file(fp)
+        for _, feat in gdf.iterrows():
+            local  = str(feat.get("NAME_1") or "").strip()
+            gid    = str(feat.get("GID_1") or "").strip()
+            varraw = feat.get("VARNAME_1") or ""
+            en     = _first_varname(varraw) or MANUAL_EN.get(local)
+            if local and gid and en and local != en:
+                rows.append({"id": gid, "local": local, "english": en,
+                             "country": cc})
+    df = pd.DataFrame(rows).drop_duplicates("id")
+    print(f"Loaded {len(df)} regions with genuine local↔English name pairs")
+    return df
 
 
 def run():
-    all_rows = []
-    for cc, url in GADM_URLS.items():
-        all_rows.extend(_fetch_gadm(cc, url))
-
-    if not all_rows:
-        print("No GADM data downloaded — check connectivity or try later.")
+    df = load_gadm_pairs()
+    if df.empty:
+        print("No pairs found.")
         return
 
-    df = pd.DataFrame(all_rows).drop_duplicates("id")
-    print(f"Total admin regions: {len(df)}")
+    print("\nSample pairs:")
+    print(df[["country","local","english"]].head(20).to_string(index=False))
 
-    # Introduce realistic noise on left side: drop parenthetical, add typo
-    import re, random
-    random.seed(42)
-    def noisify(s):
-        s = re.sub(r"\s*\(.*?\)", "", s).strip()
-        # Occasionally drop last letter
-        if len(s) > 6 and random.random() < 0.3:
-            s = s[:-1]
-        return s
-
-    df["noisy_name"] = df["local_name"].apply(noisify)
-
-    left  = df[["id","noisy_name"]].rename(columns={"noisy_name":"name"})
-    right = df[["id","en_name"]].rename(columns={"en_name":"name"}).reset_index(drop=True)
+    left  = df[["id","local"]].rename(columns={"local":"name"})
+    right = df[["id","english"]].rename(columns={"english":"name"}).reset_index(drop=True)
 
     result = match_tables(
         left, right,
@@ -93,25 +121,36 @@ def run():
 
     matched   = result[result["final_decision"] == True]
     correct   = (matched["left_id"] == matched["right_id"]).sum()
-    precision = correct / len(df) if len(df) else 0  # denominator = all regions
-    recall    = correct / len(df) if len(df) else 0
+    precision = correct / len(matched) if len(matched) else 0
+    recall    = correct / len(df)
     f1        = 2*precision*recall/(precision+recall) if (precision+recall) else 0
 
-    print(f"\n--- GADM Admin Names Results ---")
-    print(f"Regions: {len(df)}, Matched: {len(matched)}, Correct: {correct}")
+    print(f"\n--- GADM Admin Names (genuine local ↔ English) ---")
+    print(f"Pairs: {len(df)}, Matched: {len(matched)}, Correct: {correct}")
     print(f"Precision: {precision:.3f}  Recall: {recall:.3f}  F1: {f1:.3f}")
     by_label = result.groupby("reliability_label").size()
     print("By label:\n", by_label.to_string())
 
+    print("\nMatched pairs (left=local, right=english):")
+    hits = matched.merge(df[["id","local","english","country"]].rename(columns={"id":"left_id"}),
+                         on="left_id", how="left")
+    print(hits[["country","local","english","fuzzy_score","reliability_label"]].to_string(index=False))
+
     out = Path("notebooks/results_gadm_admin_names.md")
     out.write_text(f"""# GADM Administrative Boundary Name Matching
 
-Local-language names vs English-annotated variants for level-1 administrative
-regions in Germany, France, Italy, Spain, and Poland ({len(df)} regions).
+**Real challenge**: local-language region names vs genuine English translations.
+
+Examples: `Bayern → Bavaria`, `Niedersachsen → Lower Saxony`,
+`Thüringen → Thuringia`, `Toscana → Tuscany`, `Bretagne → Brittany`,
+`Andalucía → Andalusia`, `Dolnośląskie → Lower Silesian`
+
+Countries: Germany (16), France (13), Italy (20), Spain (17), Poland (16)
+Total pairs: **{len(df)}** regions
 
 | Metric | Value |
 |--------|-------|
-| Regions | {len(df)} |
+| Pairs | {len(df)} |
 | Matched | {len(matched)} |
 | Correct (same GADM GID) | {correct} |
 | Precision | {precision:.3f} |
@@ -123,11 +162,15 @@ regions in Germany, France, Italy, Spain, and Poland ({len(df)} regions).
 {by_label.to_string()}
 ```
 
+## Matched pairs
+{hits[["country","local","english","fuzzy_score","reliability_label"]].to_markdown(index=False)}
+
 ## Data source
 GADM version 4.1 (https://gadm.org). Free for academic and non-commercial use.
 """)
-    print(f"Report saved: {out}")
-    return result
+    print(f"\nReport saved: {out}")
+    return result, df
+
 
 if __name__ == "__main__":
     run()
