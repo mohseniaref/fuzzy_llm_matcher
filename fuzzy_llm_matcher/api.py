@@ -30,6 +30,7 @@ def match_tables(
     llm_client: Optional[LLMClient] = None,
     llm_model: Optional[str] = None,
     keep_all_candidates: bool = False,
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     """End-to-end fuzzy + reliability (+ optional LLM) matching pipeline.
 
@@ -44,6 +45,12 @@ def match_tables(
     `final_decision` is True when reliability_label == "high", or when
     the LLM confirmed `same_entity=True` for a medium_review pair
     (only computed if `use_llm=True`).
+
+    Parameters
+    ----------
+    n_jobs:
+        Number of parallel threads for candidate scoring.
+        ``1`` (default) = single-threaded. ``-1`` = all CPU cores.
     """
     candidates = generate_candidates(
         left_df=left_df,
@@ -55,6 +62,7 @@ def match_tables(
         block_on=block_on,
         top_k=top_k,
         scorer=scorer,
+        n_jobs=n_jobs,
     )
 
     scored = compute_similarity_features(candidates)

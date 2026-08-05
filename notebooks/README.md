@@ -7,6 +7,7 @@ This folder contains interactive notebooks and generated validation reports.
 - `01_febrl_benchmark.ipynb`: FEBRL-style benchmarking walkthrough
 - `02_company_name_matching.ipynb`: bundled company-name matching demo
 - `03_llm_review_demo.ipynb`: reliability + LLM-review demonstration
+- `04_abt_buy_paper_dataset.ipynb`: external open Abt-Buy benchmark example from published research datasets
 - `results_synthetic_validation.md`: generated markdown report with benchmark figures
 - `figures/`: generated SVG plots used by the markdown report
 

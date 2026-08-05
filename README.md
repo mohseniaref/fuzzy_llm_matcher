@@ -115,6 +115,7 @@ matches = match_tables(left, right, left_on="name", right_on="name",
 python benchmarks/company_name_test.py   # bundled sample + simulated data
 python benchmarks/llm_review_test.py     # RapidFuzz-only vs +reliability vs +LLM
 python benchmarks/febrl_test.py          # requires: pip install recordlinkage
+python benchmarks/abt_buy_paper_dataset_test.py  # published Abt-Buy dataset (SIGMOD'18 benchmark set)
 python benchmarks/splink_baseline.py     # requires: pip install splink
 ```
 
