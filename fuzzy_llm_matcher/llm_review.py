@@ -35,6 +35,19 @@ Respond with STRICT JSON only, no extra text, matching exactly this schema:
 {{"same_entity": true or false, "confidence": "low" | "medium" | "high", "reason": "short explanation"}}
 """
 
+LLM_REVIEW_GEO_PROMPT_TEMPLATE = """You are comparing two geographic place-name records to decide if they refer to the same real-world location, allowing for transliterations, abbreviations, diacritics, and language differences.
+
+Record A: {left_value}
+Record B: {right_value}
+
+Spatial context:
+{geo_context}
+
+Use both the name similarity and the spatial context to inform your decision.
+Respond with STRICT JSON only, no extra text, matching exactly this schema:
+{{"same_entity": true or false, "confidence": "low" | "medium" | "high", "reason": "short explanation"}}
+"""
+
 
 class LLMClient(Protocol):
     """Minimal interface expected of a user-supplied LLM client."""
@@ -64,22 +77,36 @@ class MockLLMClient:
             tokens.pop()
         return " ".join(tokens)
 
-    def review(self, left_value: str, right_value: str) -> dict:
+    def review(self, left_value: str, right_value: str, geo_context: Optional[str] = None) -> dict:
         a = self._strip_suffix(str(left_value))
         b = self._strip_suffix(str(right_value))
         ratio = difflib.SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-        if ratio >= 0.85:
+        # Boost confidence when a close geo distance is available in context
+        geo_boost = 0.0
+        if geo_context and "distance" in geo_context.lower():
+            import re as _re
+            m = _re.search(r"([\d.]+)\s*km", geo_context, _re.IGNORECASE)
+            if m:
+                dist_km = float(m.group(1))
+                # < 5 km → full boost; 5–50 km → partial boost; > 50 km → none
+                geo_boost = max(0.0, 0.15 * (1.0 - dist_km / 50.0))
+
+        effective_ratio = min(1.0, ratio + geo_boost)
+
+        if effective_ratio >= 0.85:
             return {
                 "same_entity": True,
                 "confidence": "high",
-                "reason": "Names match closely after removing legal suffixes.",
+                "reason": "Names match closely after removing legal suffixes."
+                + (" Confirmed by proximity." if geo_boost > 0 else ""),
             }
-        if ratio >= 0.6:
+        if effective_ratio >= 0.6:
             return {
                 "same_entity": True,
                 "confidence": "medium",
-                "reason": "Names are similar with minor variation; likely the same entity.",
+                "reason": "Names are similar with minor variation; likely the same entity."
+                + (" Spatial proximity supports match." if geo_boost > 0 else ""),
             }
         return {
             "same_entity": False,
@@ -155,10 +182,45 @@ def review_uncertain_pairs_with_llm(
     for idx in df.index[mask]:
         left_value = df.at[idx, "left_value"]
         right_value = df.at[idx, "right_value"]
+
+        # Build geo context string if coordinate columns are present
+        geo_context: Optional[str] = None
+        if all(c in df.columns for c in ("left_lat", "left_lon", "right_lat", "right_lon")):
+            flat = df.at[idx, "left_lat"]
+            flon = df.at[idx, "left_lon"]
+            rlat = df.at[idx, "right_lat"]
+            rlon = df.at[idx, "right_lon"]
+            try:
+                import math
+                if not any(v is None or (isinstance(v, float) and math.isnan(v))
+                           for v in (flat, flon, rlat, rlon)):
+                    from .fuzzy_scores import haversine_km
+                    dist = haversine_km(flat, flon, rlat, rlon)
+                    geo_context = (
+                        f"Record A coordinates: ({flat:.4f}°N, {flon:.4f}°E)  "
+                        f"Record B coordinates: ({rlat:.4f}°N, {rlon:.4f}°E)  "
+                        f"Distance: {dist:.1f} km"
+                    )
+            except Exception:
+                pass
+        # Also accept a precomputed score_geo_distance for context
+        if geo_context is None and "score_geo_distance" in df.columns:
+            sg = df.at[idx, "score_geo_distance"]
+            try:
+                import math
+                if not math.isnan(float(sg)):
+                    geo_context = f"Geo-distance similarity score: {sg:.1f}/100"
+            except Exception:
+                pass
         try:
             if hasattr(active_client, "review"):
-                raw = active_client.review(left_value, right_value)
-            else:  # allow a bare callable as `client`
+                import inspect
+                sig = inspect.signature(active_client.review)
+                if "geo_context" in sig.parameters and geo_context is not None:
+                    raw = active_client.review(left_value, right_value, geo_context=geo_context)
+                else:
+                    raw = active_client.review(left_value, right_value)
+            else:
                 raw = active_client(left_value, right_value)  # type: ignore
             parsed = _parse_llm_json(raw)
         except Exception as exc:  # never let one bad LLM call kill the batch
@@ -173,6 +235,34 @@ def review_uncertain_pairs_with_llm(
     return df
 
 
-def build_prompt(left_value: str, right_value: str) -> str:
-    """Expose the prompt template for callers wiring up a real LLM client."""
-    return LLM_REVIEW_PROMPT_TEMPLATE.format(left_value=left_value, right_value=right_value)
+def build_prompt(
+    left_value: str,
+    right_value: str,
+    geo_context: Optional[str] = None,
+) -> str:
+    """Return the review prompt for a pair, optionally enriched with spatial context.
+
+    Parameters
+    ----------
+    left_value, right_value:
+        The two record values to compare.
+    geo_context:
+        Optional string describing spatial context, e.g.
+        ``"Distance: 3.2 km"`` or a full coordinate description.
+        When supplied, the geo-aware prompt template is used.
+
+    Example
+    -------
+    >>> print(build_prompt("München", "Munich", geo_context="Distance: 0.0 km"))
+    You are comparing two geographic place-name records ...
+    """
+    if geo_context:
+        return LLM_REVIEW_GEO_PROMPT_TEMPLATE.format(
+            left_value=left_value,
+            right_value=right_value,
+            geo_context=geo_context,
+        )
+    return LLM_REVIEW_PROMPT_TEMPLATE.format(
+        left_value=left_value,
+        right_value=right_value,
+    )

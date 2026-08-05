@@ -8,7 +8,9 @@ build/
 dist/
 *.log
 
-# Downloaded geo data caches (large files)
+# Private notes — never committed
+_private/
+
 data/geonames_cache/
 data/gadm_cache/
 data/berlin_bilingual_cache.json
