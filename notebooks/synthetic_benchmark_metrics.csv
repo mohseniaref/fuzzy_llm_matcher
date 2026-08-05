@@ -1,0 +1,4 @@
+strategy,precision,recall,f1,true_positives,false_positives,false_negatives,false_confident_matches,n_pairs_sent_to_llm
+RapidFuzz only,0.7733333333333333,0.7733333333333333,0.7733333333333333,58,17,17,0,0
+RapidFuzz + reliability,1.0,0.013333333333333334,0.02631578947368421,1,0,74,0,0
+RapidFuzz + reliability + LLM,0.8,0.5866666666666667,0.676923076923077,44,11,31,0,70

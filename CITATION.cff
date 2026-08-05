@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "fuzzy_llm_matcher: Reliable fuzzy matching with optional LLM review"
+version: 0.1.0
+date-released: 2026-08-05
+authors:
+  - family-names: "Mohseni Aref"
+    given-names: "Mohammad"
+    affiliation: "University of Potsdam"
+license: MIT
+repository-code: "https://github.com/mohseniaref/fuzzy_llm_matcher"
+keywords:
+  - fuzzy matching
+  - record linkage
+  - entity resolution
+  - deduplication
+  - large language models

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fuzzy_llm_matcher"
+version = "0.1.0"
+description = "Reliable fuzzy matching for noisy tabular data, with score-margin confidence estimation and optional LLM review for ambiguous cases."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Mohammad Mohseni Aref" }
+]
+requires-python = ">=3.9"
+keywords = [
+    "fuzzy-matching",
+    "record-linkage",
+    "entity-resolution",
+    "deduplication",
+    "llm",
+    "data-cleaning",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Text Processing :: Linguistic",
+]
+dependencies = [
+    "pandas>=1.5",
+    "rapidfuzz>=3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+benchmarks = ["recordlinkage", "splink"]
+
+[project.urls]
+Homepage = "https://github.com/mohseniaref/fuzzy_llm_matcher"
+Issues = "https://github.com/mohseniaref/fuzzy_llm_matcher/issues"
+
+[tool.setuptools.packages.find]
+include = ["fuzzy_llm_matcher*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
