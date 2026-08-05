@@ -1,5 +1,7 @@
 # fuzzy_llm_matcher
 
+![Fuzzy matching on real-world place names](notebooks/figures/geo_matching_world_map.png)
+
 Reliable fuzzy matching for noisy tabular data, combining deterministic
 string similarity, score-margin based confidence estimation, and optional
 LLM review for ambiguous cases.
@@ -9,6 +11,7 @@ layer** that flags which matches are trustworthy and which are uncertain
 or falsely confident, so you know where to look before trusting a merge.
 
 ## Install
+
 
 ```bash
 pip install -e .
@@ -142,6 +145,25 @@ swaps, punctuation changes, legal-suffix changes, spelling noise,
 capitalization changes, extra location tokens, partial names, and
 initialized first names/words.
 
+## Scaling and other data sources
+
+```bash
+python examples/pyspark_sql_fuzzy_matching.py     # n_jobs parallelism, DuckDB SQL, SQLite SQL patterns
+python examples/osm_geonames_place_matching.py    # 40 hard OpenStreetMap/GeoNames city-name pairs
+python examples/geo_map_visualization.py          # world-map figure of the geo matching results
+```
+
+- `match_tables(..., n_jobs=-1)` parallelizes candidate scoring across CPU cores
+  (rapidfuzz releases the GIL, so threads give a real speedup).
+- `examples/pyspark_sql_fuzzy_matching.py` shows the same matching logic expressed as
+  DuckDB SQL and SQLite SQL, plus a documented PySpark broadcast + `mapPartitions` pattern
+  for cluster-scale matching.
+- `examples/osm_geonames_place_matching.py` is an offline benchmark of transliterations,
+  abbreviations, and local-vs-English place names (Moskva/Moscow, NYC/New York City, etc.).
+- `examples/geo_map_visualization.py` renders `notebooks/figures/geo_matching_world_map.png`,
+  a dark-themed world map with arcs connecting each dirty name to its canonical match,
+  colored by reliability — handy for sharing results.
+
 ## Tests
 
 ```bash
@@ -154,7 +176,8 @@ pytest
 ```text
 fuzzy_llm_matcher/   core package
 docs/                step-by-step package guide
-benchmarks/          benchmark scripts (FEBRL, company names, LLM comparison, Splink)
+benchmarks/          benchmark scripts (FEBRL, company names, LLM comparison, Splink, Abt-Buy)
+examples/            parallel/SQL/PySpark patterns, OSM geo benchmark, world-map figure
 data/                small bundled sample CSVs + ground truth
 tests/                pytest test suite
 notebooks/           example notebooks (see notebooks/README.md)
