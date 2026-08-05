@@ -2,9 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
-## [0.1.0] - 2026-08-05
+## [0.1.0-alpha] - 2026-08-05
 
-First public release.
+> ⚠️ **Experimental / alpha software.** APIs may change without notice.
+> Not yet independently validated on production data. Use at your own risk.
+> Bug reports and feedback via [GitHub Issues](https://github.com/mohseniaref/fuzzy_llm_matcher/issues) welcome.
+
+First public preview release.
 
 ### Added
 - Core fuzzy matching pipeline: RapidFuzz string similarity, score-margin
