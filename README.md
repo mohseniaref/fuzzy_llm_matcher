@@ -1,5 +1,7 @@
 # fuzzy_llm_matcher
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21803695.svg)](https://doi.org/10.5281/zenodo.21803695)
+
 > ⚠️ **Experimental / alpha (v0.1.0-alpha).** APIs may change without notice
 > and this has not yet been independently validated on production data.
 > Use at your own risk — bug reports and feedback via

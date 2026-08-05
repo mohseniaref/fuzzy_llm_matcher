@@ -1,14 +1,16 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "fuzzy_llm_matcher: Reliable fuzzy matching with optional LLM review"
-version: 0.1.0
+version: 0.1.0-alpha
 date-released: 2026-08-05
+doi: 10.5281/zenodo.21803695
 authors:
   - family-names: "Mohseni Aref"
     given-names: "Mohammad"
     affiliation: "University of Potsdam"
 license: MIT
 repository-code: "https://github.com/mohseniaref/fuzzy_llm_matcher"
+url: "https://doi.org/10.5281/zenodo.21803695"
 keywords:
   - fuzzy matching
   - record linkage
