@@ -120,7 +120,7 @@ def fig_benchmark_summary():
         ("Berlin OSM\nDE ↔ EN",       1.000, 0.027, 0.052,  300,   8),
         ("GeoNames\nDiacritics",       0.957, 0.055, 0.104,  400,  22),
         ("Wikidata\nCity Labels",      1.000, 0.993, 0.997,  300, 298),
-        ("GADM\nAdmin Regions",        0.036, 0.036, 0.036,   83,   3),
+        ("GADM\nAdmin Regions",        1.000, 0.143, 0.250,   70,  10),
     ]
     labels  = [d[0] for d in data]
     prec    = [d[1] for d in data]
@@ -177,8 +177,8 @@ def fig_benchmark_summary():
          "300", "298", "298", "1.000", "0.993", "0.997",
          "Near-perfect — disambiguation variants"],
         ["GADM Admin Regions", "GADM v4.1 (academic)",
-         "83", "3", "3", "0.036", "0.036", "0.036",
-         "Hard — short noisy region names"],
+         "70", "10", "10", "1.000", "0.143", "0.250",
+         "Bayern→Bavaria, Bretagne→Brittany, Thüringen→Thuringia"],
     ]
 
     the_table = ax_tbl.table(

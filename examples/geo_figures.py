@@ -57,7 +57,7 @@ def fig_benchmark_comparison():
         ("Berlin\nOSM DE↔EN",   1.000, 0.027, 0.052),
         ("GeoNames\nDiacritics", 0.957, 0.055, 0.104),
         ("Wikidata\nCity Labels",1.000, 0.993, 0.997),
-        ("GADM\nAdmin Names",    0.036, 0.036, 0.036),
+        ("GADM\nAdmin Names",    1.000, 0.143, 0.250),
     ]
     labels = [b[0] for b in benchmarks]
     prec   = [b[1] for b in benchmarks]
