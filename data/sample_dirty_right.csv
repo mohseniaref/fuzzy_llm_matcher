@@ -1,7 +1,29 @@
 id,name,country
-10,Delft University of Technology,NL
-11,Sky Geo B.V.,NL
-12,Statista Strategy GmbH & Co. KG,DE
-13,Mohammad Mohseni Aref,DE
-14,University of Potsdam,DE
-15,Amazon Deutschland GmbH,DE
+101,Delft University of Technology,NL
+102,SkyGeo B.V.,NL
+103,Statista Strategy GmbH & Co. KG,DE
+104,University of Potsdam,DE
+105,Massachusetts Institute of Technology,US
+106,Google LLC,US
+107,Alphabet Inc.,US
+108,Amazon Web Services EMEA SARL,LU
+109,Amazon Deutschland GmbH,DE
+110,OpenAI OpCo LLC,US
+111,Anthropic PBC,US
+112,TU Munich,DE
+113,Technical University of Munich,DE
+114,European Space Agency,FR
+115,ESADE Business School,ES
+116,United Nations Children's Fund,CH
+117,UNICEF Nederland,NL
+118,World Health Organization,CH
+119,WHO Foundation,CH
+120,Siemens AG,DE
+121,Siemens Healthineers AG,DE
+122,NVIDIA Corporation,US
+123,University College London,UK
+124,UCL Institute of Education,UK
+125,New York University,US
+126,NYU Langone Health,US
+127,Royal Dutch Shell plc,NL
+128,Shell Recharge Solutions,NL

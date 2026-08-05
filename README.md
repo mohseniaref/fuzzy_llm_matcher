@@ -21,6 +21,15 @@ the package automatically falls back to a pure-Python `difflib`-based
 scorer (slower, slightly less accurate, zero extra dependencies) — useful
 for quick offline demos, but install `rapidfuzz` for real use.
 
+## Start here (step-by-step)
+
+If you want a very practical walkthrough, read:
+
+- `docs/STEP_BY_STEP_GUIDE.md`
+
+It explains the package in simple stages: dataset shape, matching pipeline,
+confidence labels, optional LLM review, evaluation, and tuning.
+
 ## Quickstart
 
 ```python
@@ -47,6 +56,11 @@ print(matches)
 Output columns: `left_id, right_id, left_value, right_value, fuzzy_score,
 score_margin_to_second_best, reliability_label, llm_same_entity,
 llm_confidence, final_decision`.
+
+The bundled sample in `data/` is intentionally richer now: realistic
+organization names, abbreviations, legal-suffix variations, acronym
+collisions (for example ESA vs ESADE, WHO vs WHO Foundation), and hard
+distractors.
 
 ## How it works
 
@@ -138,6 +152,7 @@ pytest
 
 ```text
 fuzzy_llm_matcher/   core package
+docs/                step-by-step package guide
 benchmarks/          benchmark scripts (FEBRL, company names, LLM comparison, Splink)
 data/                small bundled sample CSVs + ground truth
 tests/                pytest test suite
