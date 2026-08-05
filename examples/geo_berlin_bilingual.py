@@ -20,7 +20,7 @@ area["name"="Berlin"]["boundary"="administrative"]["admin_level"="4"]->.berlin;
   node["name"]["name:en"](area.berlin);
   way["name"]["name:en"](area.berlin);
 );
-out tags 1500;
+out center tags 1500;
 """
 
 def fetch_berlin_bilingual(cache_path: Path) -> pd.DataFrame:
