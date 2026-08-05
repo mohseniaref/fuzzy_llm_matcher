@@ -1,5 +1,10 @@
 # fuzzy_llm_matcher
 
+> ⚠️ **Experimental / alpha (v0.1.0-alpha).** APIs may change without notice
+> and this has not yet been independently validated on production data.
+> Use at your own risk — bug reports and feedback via
+> [GitHub Issues](https://github.com/mohseniaref/fuzzy_llm_matcher/issues) welcome.
+
 ![Fuzzy matching on real-world place names](notebooks/figures/geo_matching_world_map.png)
 
 Reliable fuzzy matching for noisy tabular data, combining deterministic
