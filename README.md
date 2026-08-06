@@ -2,7 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21803695.svg)](https://doi.org/10.5281/zenodo.21803695)
 
-> ⚠️ **Experimental / alpha (v0.1.0-alpha).** APIs may change without notice
+> ⚠️ **Experimental / alpha (v0.2.0-alpha).** APIs may change without notice
 > and this has not yet been independently validated on production data.
 > Use at your own risk — bug reports and feedback via
 > [GitHub Issues](https://github.com/mohseniaref/fuzzy_llm_matcher/issues) welcome.
@@ -587,16 +587,12 @@ notebooks/
 
 ## Future extensions
 
-- Transliteration pre-processor (`unidecode`, `jellyfish` phonetic scoring)
-- Hierarchical admin-level blocking (country → province → district)
-- Coordinate-uncertainty-aware geo score (probability of spatial overlap)
-- Geometry similarity score for linear / polygon features (Hausdorff, Fréchet)
-- Temporal blocking for historical name changes
+- Temporal blocking for historical name changes (Leningrad → Saint Petersburg)
 - H3 hexagonal index integration (Uber H3) for multi-resolution hex IDs
 - QGIS Processing algorithm plugin
-- QGIS Processing algorithm plugin
 - CLI (`fuzzy-geo-match left.csv right.csv --output matches.csv`)
-- Embedding-based multilingual name matching
+- Embedding-based multilingual name matching (sentence-transformers)
+- Active-learning threshold calibration loop
 
 ---
 

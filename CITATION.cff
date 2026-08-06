@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
-title: "fuzzy_llm_matcher: Reliable fuzzy matching with optional LLM review"
-version: 0.1.0-alpha
-date-released: 2026-08-05
+title: "fuzzy_llm_matcher: Reliable fuzzy matching with optional LLM review and geospatial support"
+version: 0.2.0-alpha
+date-released: 2026-08-06
 doi: 10.5281/zenodo.21803695
 authors:
   - family-names: "Mohseni Aref"
@@ -11,9 +11,26 @@ authors:
 license: MIT
 repository-code: "https://github.com/mohseniaref/fuzzy_llm_matcher"
 url: "https://doi.org/10.5281/zenodo.21803695"
+abstract: >
+  fuzzy_llm_matcher is a Python library for reliable fuzzy matching of noisy
+  tabular and geospatial data. It combines deterministic string similarity,
+  score-margin based confidence estimation, optional LLM review for ambiguous
+  cases, and a full geospatial matching pipeline including spatial blocking,
+  geo-distance scoring, coordinate-uncertainty-aware matching, geometry
+  similarity scores (Hausdorff, Fréchet, IoU), transliteration, phonetic
+  scoring, hexagonal grid blocking, and tile basemap visualisation.
 keywords:
   - fuzzy matching
   - record linkage
   - entity resolution
   - deduplication
   - large language models
+  - geospatial
+  - gis
+  - toponym
+  - place names
+  - transliteration
+  - phonetic matching
+  - spatial blocking
+  - hexagonal grid
+  - admin boundaries

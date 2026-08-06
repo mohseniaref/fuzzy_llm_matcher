@@ -48,7 +48,7 @@ from .utils import (
 from .reliability import assign_reliability, false_confident_matches
 from .simulation import simulate_dirty_entities
 
-__version__ = "0.1.0"
+__version__ = "0.2.0-alpha"
 
 __all__ = [
     "match_tables",
