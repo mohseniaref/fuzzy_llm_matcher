@@ -37,6 +37,8 @@ dependencies = [
 dev = ["pytest>=7.0"]
 benchmarks = ["recordlinkage", "splink"]
 geo = ["geopandas>=0.13", "matplotlib>=3.7", "geodatasets>=0.0.1", "contextily>=1.3", "xyzservices>=2022.9"]
+nlp = ["unidecode>=1.3", "jellyfish>=0.11"]
+all = ["geopandas>=0.13", "matplotlib>=3.7", "geodatasets>=0.0.1", "contextily>=1.3", "xyzservices>=2022.9", "unidecode>=1.3", "jellyfish>=0.11"]
 
 [project.urls]
 Homepage = "https://github.com/mohseniaref/fuzzy_llm_matcher"

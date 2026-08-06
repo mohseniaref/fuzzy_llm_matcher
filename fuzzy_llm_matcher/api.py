@@ -1027,3 +1027,194 @@ def fuzzy_dissolve(
 
     result = gpd.GeoDataFrame(agg_rows, geometry=dissolved_geoms, crs=left_gdf.crs)
     return result.reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Feature 2: Hierarchical admin-level blocking
+# ---------------------------------------------------------------------------
+
+def hierarchical_block_match(
+    left_df: pd.DataFrame,
+    right_df: pd.DataFrame,
+    left_on: str,
+    right_on: str,
+    block_levels: list,
+    left_id: Optional[str] = None,
+    right_id: Optional[str] = None,
+    top_k: int = 5,
+    scorer: str = "WRatio",
+    high_threshold: float = 92,
+    medium_threshold: float = 80,
+    min_margin_high: float = 8,
+    reject_threshold: float = 60,
+    use_llm: bool = False,
+    llm_client: Optional[LLMClient] = None,
+    n_jobs: int = 1,
+) -> pd.DataFrame:
+    """Fuzzy match with hierarchical admin-level blocking fallback.
+
+    Tries each blocking level from finest to coarsest.  A left row that
+    produces no candidates at the fine level is promoted to the coarser
+    block and matched there instead.  This eliminates the boundary problem
+    of flat blocking: features near admin boundaries are never missed.
+
+    Parameters
+    ----------
+    left_df, right_df:
+        Input DataFrames.
+    left_on, right_on:
+        Columns to fuzzy-match on.
+    block_levels:
+        List of column names (or 2-tuples ``(left_col, right_col)`` when the
+        column names differ between tables), ordered from **finest** to
+        **coarsest** admin level, e.g.:
+
+        .. code-block:: python
+
+            # Same column names in both tables
+            block_levels = ["district", "province", "country"]
+
+            # Different column names per level
+            block_levels = [
+                ("admin4_name", "gn_admin4"),
+                ("admin3_name", "gn_admin3"),
+                ("admin2_name", "gn_admin2"),
+            ]
+
+        The algorithm tries ``block_levels[0]`` first (finest).  Any left
+        rows with no candidates are retried at ``block_levels[1]``, and so on.
+        Left rows still unmatched after all levels are included with empty
+        right columns.
+
+    Returns
+    -------
+    pd.DataFrame — columns from ``match_tables()`` plus ``_block_level``
+    (which blocking level was used for each match, 0 = finest).
+
+    Examples
+    --------
+    >>> result = hierarchical_block_match(
+    ...     census_df, shapefile_df,
+    ...     left_on="gn_division", right_on="gn_name",
+    ...     block_levels=["district", "province"],
+    ... )
+    >>> result["_block_level"].value_counts()
+    0    12341   ← matched at district level
+    1      432   ← fell back to province level
+    dtype: int64
+
+    Notes
+    -----
+    Why this matters (the boundary problem)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    With flat blocking on "district", a GN Division that straddles the
+    boundary between Colombo and Gampaha districts will only be compared
+    against features in ONE of them.  The hierarchical approach ensures it
+    is always compared at the province level as a fallback if the district
+    block produces no match.
+    """
+    if not block_levels:
+        raise ValueError("block_levels must contain at least one entry.")
+
+    # Normalise block_levels to (left_col, right_col) tuples
+    levels = [
+        (b, b) if isinstance(b, str) else tuple(b)
+        for b in block_levels
+    ]
+
+    all_left_ids = set(
+        left_df[left_id].tolist() if left_id else left_df.index.tolist()
+    )
+    matched_ids: set = set()
+    level_results: list = []
+
+    for level_idx, (lcol, rcol) in enumerate(levels):
+        # Only process left rows not yet matched
+        if left_id:
+            unmatched_left = left_df[~left_df[left_id].isin(matched_ids)].copy()
+        else:
+            unmatched_left = left_df[~left_df.index.isin(matched_ids)].copy()
+
+        if unmatched_left.empty:
+            break
+
+        block_on: Optional[str] = None
+        if lcol == rcol:
+            block_on = lcol
+        else:
+            # Temporarily rename right column to match left column name
+            right_tmp = right_df.rename(columns={rcol: lcol}).copy()
+            block_on  = lcol
+
+        right_use = right_df if lcol == rcol else right_tmp  # type: ignore
+
+        candidates = generate_candidates(
+            left_df=unmatched_left,
+            right_df=right_use,
+            left_on=left_on,
+            right_on=right_on,
+            left_id=left_id,
+            right_id=right_id,
+            block_on=block_on,
+            top_k=top_k,
+            scorer=scorer,
+            n_jobs=n_jobs,
+        )
+
+        if candidates.empty:
+            continue
+
+        from .fuzzy_scores import compute_similarity_features
+        from .reliability import assign_reliability
+
+        scored = compute_similarity_features(candidates)
+        labeled = assign_reliability(
+            scored,
+            high_threshold=high_threshold,
+            medium_threshold=medium_threshold,
+            min_margin_high=min_margin_high,
+            reject_threshold=reject_threshold,
+        )
+
+        if use_llm:
+            from .llm_review import review_uncertain_pairs_with_llm
+            labeled = review_uncertain_pairs_with_llm(labeled, client=llm_client)
+        else:
+            for col in ("llm_same_entity", "llm_confidence", "llm_reason"):
+                if col not in labeled.columns:
+                    labeled[col] = None
+
+        def _final(row) -> bool:
+            if row["reliability_label"] == "high":
+                return True
+            if row["reliability_label"] == "medium_review" and row.get("llm_same_entity") is True:
+                return True
+            return False
+
+        labeled["final_decision"] = labeled.apply(_final, axis=1)
+        labeled["_block_level"]   = level_idx
+
+        # Keep only best candidate per left row
+        labeled = labeled.sort_values(["left_id", "score"], ascending=[True, False])
+        labeled = labeled.groupby("left_id", as_index=False).first()
+
+        # Mark these left rows as matched
+        newly_matched = set(labeled["left_id"].tolist())
+        matched_ids |= newly_matched
+        level_results.append(labeled)
+
+    if not level_results:
+        return pd.DataFrame()
+
+    result = pd.concat(level_results, ignore_index=True)
+
+    # Rename score_wratio → fuzzy_score
+    result_cols = [
+        "left_id", "right_id", "left_value", "right_value",
+        "score_wratio", "score_margin_to_second_best",
+        "reliability_label", "llm_same_entity", "llm_confidence",
+        "final_decision", "_block_level",
+    ]
+    result = result[[c for c in result_cols if c in result.columns]].copy()
+    result = result.rename(columns={"score_wratio": "fuzzy_score"})
+    return result.reset_index(drop=True)
