@@ -478,7 +478,55 @@ python examples/geo_fuzzy_join_dissolve.py
 
 # World-map visualisation:
 python examples/geo_map_visualization.py
+
+# Spatial proximity matching (sjoin_nearest) + tile basemaps:
+python examples/geo_sjoin_basemap.py
+
+# Hexagonal grid blocking + choropleth:
+python examples/geo_hexagon_matching.py
 ```
+
+---
+
+## Hexagonal grid blocking
+
+The optimal tessellation for spatial blocking — equal-area cells, 6 equidistant
+neighbours, no polar distortion.
+
+```python
+from fuzzy_llm_matcher import (
+    create_hexagon, create_hexagon_grid, assign_hex_ids, hex_block_match,
+    add_basemap,
+)
+
+# Build a hex grid over any GeoDataFrame
+grid = create_hexagon_grid(gdf, radius_m=10_000, projected_crs="EPSG:32633")
+
+# Assign each feature to its hexagon cell
+gdf_hexed = assign_hex_ids(gdf, grid)
+
+# Full pipeline: hex blocking → fuzzy matching → geo score → LLM review
+result, grid = hex_block_match(
+    left_gdf, right_gdf,
+    left_on="name", right_on="name",
+    hex_radius_m=10_000,           # 10 km cells
+    projected_crs="EPSG:32633",    # UTM zone for accurate distances
+    use_llm=True,
+    return_grid=True,
+)
+
+# Choropleth of match confidence per hexagon on satellite background
+ax = grid.to_crs(3857).plot(column="hex_id", legend=True, alpha=0.6)
+add_basemap(ax, style="satellite")
+```
+
+**Why hexagonal > degree-grid blocking:**
+- Equal area per cell (no polar distortion)
+- 6 equidistant neighbours (vs 4 for square grids — fewer edge artefacts)
+- Shortest perimeter per unit area → fewer boundary misses
+- `radius_m` in metres, not degrees — scale-independent
+
+*Inspired by: [gemgis.readthedocs.io/tutorial/58_creating_hexagonal_grid.html](https://gemgis.readthedocs.io/en/latest/getting_started/tutorial/58_creating_hexagonal_grid.html)*
 
 ---
 
@@ -500,6 +548,8 @@ fuzzy_llm_matcher/        core package
                           fuzzy_dissolve()
   candidate_generation.py top-k fuzzy candidate generation
   fuzzy_scores.py         string + geo-distance similarity features
+  geo_proximity.py        sjoin_nearest, combined_score, hex grid,
+                          TileBasemap / add_basemap
   llm_review.py           LLM review, geo-aware prompt, MockLLMClient
   reliability.py          confidence labelling
   simulation.py           dirty-data generator
@@ -528,6 +578,10 @@ notebooks/
 | ![](notebooks/figures/geo_gdf_spatial_blocks.png) | Spatial blocking grid — pairs in the same cell are compared |
 | ![](notebooks/figures/geo_fuzzy_join_table.png) | `fuzzy_join()` result — dirty names joined to canonical names |
 | ![](notebooks/figures/geo_fuzzy_dissolve_ops.png) | `fuzzy_dissolve()` — four geometry combination modes |
+| ![](notebooks/figures/geo_sjoin_nearest_results.png) | `sjoin_nearest_candidates()` + `combined_score()` on OSM tiles |
+| ![](notebooks/figures/geo_basemap_comparison.png) | Same data on 4 tile styles (dark/OSM/satellite/Google-like) |
+| ![](notebooks/figures/geo_hex_grid_overview.png) | Hexagonal grid at three resolutions on CartoDB Dark tiles |
+| ![](notebooks/figures/geo_hex_satellite_choropleth.png) | Hex choropleth of match confidence on ESRI satellite imagery |
 
 ---
 
@@ -538,6 +592,8 @@ notebooks/
 - Coordinate-uncertainty-aware geo score (probability of spatial overlap)
 - Geometry similarity score for linear / polygon features (Hausdorff, Fréchet)
 - Temporal blocking for historical name changes
+- H3 hexagonal index integration (Uber H3) for multi-resolution hex IDs
+- QGIS Processing algorithm plugin
 - QGIS Processing algorithm plugin
 - CLI (`fuzzy-geo-match left.csv right.csv --output matches.csv`)
 - Embedding-based multilingual name matching

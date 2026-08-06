@@ -18,7 +18,11 @@ from .fuzzy_scores import (
 from .geo_proximity import (
     TileBasemap,
     add_basemap,
+    assign_hex_ids,
     combined_score,
+    create_hexagon,
+    create_hexagon_grid,
+    hex_block_match,
     sjoin_nearest_candidates,
 )
 from .llm_review import MockLLMClient, build_prompt, review_uncertain_pairs_with_llm
@@ -37,6 +41,10 @@ __all__ = [
     "combined_score",
     "add_basemap",
     "TileBasemap",
+    "create_hexagon",
+    "create_hexagon_grid",
+    "assign_hex_ids",
+    "hex_block_match",
     "generate_candidates",
     "compute_similarity_features",
     "add_geo_distance_score",

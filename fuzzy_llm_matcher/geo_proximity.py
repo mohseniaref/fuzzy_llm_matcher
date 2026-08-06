@@ -451,3 +451,380 @@ def combined_score(
     df[output_col] = w_name * df[name_col] + w_dist * df[dist_score_col]
 
     return df[df[output_col] >= threshold].reset_index(drop=True)
+
+
+# ── Hexagonal grid blocking ─────────────────────────────────────────────────
+# Pure-Shapely implementation — no gemgis / h3 dependency needed.
+# Inspired by:
+#   https://gemgis.readthedocs.io/en/latest/getting_started/tutorial/58_creating_hexagonal_grid.html
+
+def create_hexagon(center, radius: float):
+    """Return a flat-top regular hexagon as a Shapely Polygon.
+
+    The radius is the distance from the centre to each vertex (= side length).
+    Flat-top means two edges are horizontal.
+
+    Parameters
+    ----------
+    center:
+        A ``shapely.geometry.Point`` or ``(x, y)`` tuple for the centre.
+    radius:
+        Distance from centre to vertex in the CRS units (metres for
+        projected CRS, degrees for geographic CRS).
+
+    Returns
+    -------
+    shapely.geometry.Polygon
+
+    Examples
+    --------
+    >>> from shapely.geometry import Point
+    >>> from fuzzy_llm_matcher.geo_proximity import create_hexagon
+    >>> h = create_hexagon(Point(0, 0), radius=1000)
+    >>> round(h.area, 0)
+    2598076.0
+    """
+    import math
+    from shapely.geometry import Polygon, Point as SPoint
+
+    if hasattr(center, "x"):
+        cx, cy = center.x, center.y
+    else:
+        cx, cy = float(center[0]), float(center[1])
+
+    # Flat-top: vertex angles at 30°, 90°, 150°, 210°, 270°, 330°
+    angles = [math.pi / 6 + math.pi / 3 * i for i in range(6)]
+    return Polygon([(cx + radius * math.cos(a), cy + radius * math.sin(a))
+                    for a in angles])
+
+
+def create_hexagon_grid(
+    gdf,
+    radius_m: float = 5000.0,
+    projected_crs: str = "EPSG:3857",
+    crop: bool = True,
+    buffer_pct: float = 0.1,
+    hex_id_col: str = "hex_id",
+):
+    """Create a hexagonal grid covering the extent of a GeoDataFrame.
+
+    Each hexagon has a unique integer ``hex_id`` column suitable for use as
+    a blocking key in :func:`~fuzzy_llm_matcher.match_geodataframes`.
+
+    Mirrors the ``gemgis.vector.create_hexagon_grid()`` approach but is
+    implemented entirely in Shapely — no gemgis dependency needed.
+
+    Parameters
+    ----------
+    gdf:
+        Input GeoDataFrame whose bounding box defines the grid extent.
+    radius_m:
+        Radius of each hexagon (centre → vertex) in metres. This equals
+        the side length of the hexagon.
+
+        Typical values:
+            - 500 m  — sub-district / neighbourhood scale
+            - 2 km   — city district scale
+            - 10 km  — regional scale
+            - 50 km  — national scale
+    projected_crs:
+        A projected CRS with metre units used for grid generation. The
+        output grid is then reprojected back to the input GDF's CRS.
+    crop:
+        If ``True`` (default), clip the grid to the input GDF boundary.
+        If ``False``, return the full bounding-box grid.
+    buffer_pct:
+        Fraction of ``radius_m`` added as a buffer around the bounding box
+        to ensure features near edges are covered. Default 10%.
+    hex_id_col:
+        Name of the integer ID column added to each hexagon.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame with columns ``[hex_id_col, geometry]``
+
+    Examples
+    --------
+    >>> import geopandas as gpd
+    >>> from fuzzy_llm_matcher.geo_proximity import create_hexagon_grid
+    >>> cities = gpd.read_file(gpd.datasets.get_path("naturalearth_lowres"))
+    >>> grid = create_hexagon_grid(cities, radius_m=500_000)
+    >>> grid.plot(alpha=0.4, edgecolor="black")
+    """
+    import math
+    import warnings
+    import geopandas as gpd
+    from shapely.geometry import Polygon, MultiPolygon
+    from shapely.ops import unary_union
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        gdf_proj = gdf.to_crs(projected_crs)
+
+    r = float(radius_m)
+    buf = r * buffer_pct
+    xmin, ymin, xmax, ymax = gdf_proj.total_bounds
+    xmin -= buf; ymin -= buf; xmax += buf; ymax += buf
+
+    # Flat-top hexagon tiling
+    # Column spacing (centre-to-centre horizontal) = r * sqrt(3)
+    # Row spacing    (centre-to-centre vertical)   = r * 1.5
+    dx = r * math.sqrt(3)
+    dy = r * 1.5
+
+    hexes = []
+    row = 0
+    y = ymin
+    while y - r < ymax:
+        x_offset = (dx / 2) if (row % 2) else 0.0
+        x = xmin - dx + x_offset
+        while x - r < xmax:
+            hexes.append(create_hexagon((x, y), r))
+            x += dx
+        y += dy
+        row += 1
+
+    grid = gpd.GeoDataFrame(
+        {hex_id_col: range(len(hexes))},
+        geometry=hexes,
+        crs=projected_crs,
+    )
+
+    if crop:
+        study_area = unary_union(gdf_proj.geometry)
+        grid = grid[grid.geometry.intersects(study_area)].copy()
+        grid = grid.reset_index(drop=True)
+        grid[hex_id_col] = range(len(grid))
+
+    return grid.to_crs(gdf.crs)
+
+
+def assign_hex_ids(
+    gdf,
+    hex_grid,
+    hex_id_col: str = "hex_id",
+    how: str = "centroid",
+    include_neighbors: bool = False,
+) -> "gpd.GeoDataFrame":
+    """Assign each feature in ``gdf`` to one (or more) hexagon cell IDs.
+
+    Parameters
+    ----------
+    gdf:
+        Input GeoDataFrame (Points, Polygons, or any geometry type).
+    hex_grid:
+        Hexagonal grid GeoDataFrame produced by :func:`create_hexagon_grid`.
+    hex_id_col:
+        Name of the hex ID column in ``hex_grid``.
+    how:
+        Spatial join predicate:
+        - ``"centroid"`` (default) — each feature is assigned to the hex
+          containing its centroid. Fast and unambiguous for any geometry type.
+        - ``"intersects"`` — each feature is assigned to every hex it
+          touches. A polygon straddling two hexes gets two rows. Useful
+          when ``include_neighbors=True``.
+    include_neighbors:
+        If ``True``, also assign each feature to the 6 adjacent hexagons
+        of its primary cell. This prevents features near hex boundaries from
+        being missed. Requires ``how="intersects"`` for full effect.
+
+    Returns
+    -------
+    GeoDataFrame with a new ``hex_id_col`` column. When a feature falls in
+    multiple hexes (how="intersects"), it appears multiple times.
+    """
+    import warnings
+    import geopandas as gpd
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+
+        if how == "centroid":
+            centroids = gdf.copy()
+            centroids.geometry = gdf.geometry.centroid
+            joined = gpd.sjoin(
+                centroids, hex_grid[[hex_id_col, "geometry"]],
+                how="left", predicate="within"
+            ).drop(columns=["index_right"], errors="ignore")
+        else:
+            joined = gpd.sjoin(
+                gdf, hex_grid[[hex_id_col, "geometry"]],
+                how="left", predicate="intersects"
+            ).drop(columns=["index_right"], errors="ignore")
+
+    return joined
+
+
+def hex_block_match(
+    left_gdf,
+    right_gdf,
+    left_on: str,
+    right_on: str,
+    left_id: Optional[str] = None,
+    right_id: Optional[str] = None,
+    hex_radius_m: float = 5000.0,
+    projected_crs: str = "EPSG:3857",
+    include_neighbor_hexes: bool = False,
+    crop_grid: bool = False,
+    max_distance_km: float = 50.0,
+    top_k: int = 5,
+    scorer: str = "WRatio",
+    high_threshold: float = 92,
+    medium_threshold: float = 80,
+    min_margin_high: float = 8,
+    reject_threshold: float = 60,
+    use_llm: bool = False,
+    llm_client=None,
+    n_jobs: int = 1,
+    return_geometry: bool = True,
+    return_grid: bool = False,
+):
+    """Fuzzy match two GeoDataFrames using hexagonal grid blocking.
+
+    Creates a flat-top hexagonal grid over the study area, assigns each
+    feature to its hexagon cell, then runs the full fuzzy matching pipeline
+    using hex cell membership as the blocking key.
+
+    Why hexagonal blocking is better than degree-grid blocking
+    ----------------------------------------------------------
+    - **Equal area**: every hexagon covers the same area (no polar distortion)
+    - **Equidistant neighbors**: the 6 adjacent hexagons are all equidistant
+      from the centre (unlike a square grid where diagonals are farther)
+    - **Lower boundary artifacts**: hexagons have shorter perimeters per unit
+      area than squares, so fewer features straddle cell boundaries
+    - **Scalable**: ``hex_radius_m`` controls resolution independently of CRS
+
+    Parameters
+    ----------
+    left_gdf, right_gdf:
+        Input GeoDataFrames in any CRS.
+    left_on, right_on:
+        Columns to fuzzy-match on.
+    left_id, right_id:
+        Optional ID column names.
+    hex_radius_m:
+        Hexagon radius (centre → vertex) in metres. Controls grid resolution:
+        - 500 m  — street block / sub-district
+        - 2 km   — city district
+        - 10 km  — municipality
+        - 50 km  — regional
+        - 200 km — national
+    projected_crs:
+        Projected CRS with metre units for hex grid generation.
+        Use a UTM zone centred on your study area for most accuracy.
+    include_neighbor_hexes:
+        If ``True``, each feature is also compared against features in
+        the 6 adjacent hexagons. Use this when features near cell boundaries
+        might otherwise be missed. Increases matching time by ~7×.
+    crop_grid:
+        If ``True``, the hex grid is cropped to the union of both GDFs.
+        Leave ``False`` (default) for faster setup.
+    max_distance_km:
+        Distance at which ``score_geo_distance`` reaches 0.
+    top_k, scorer, high_threshold, medium_threshold,
+    min_margin_high, reject_threshold, use_llm, llm_client, n_jobs:
+        Forwarded to :func:`~fuzzy_llm_matcher.match_geodataframes`.
+    return_geometry:
+        Attach left geometry to result GeoDataFrame.
+    return_grid:
+        If ``True``, also return the hexagonal grid GeoDataFrame.
+
+    Returns
+    -------
+    result: GeoDataFrame (or DataFrame when return_geometry=False)
+        Match result with all standard columns plus ``hex_id`` blocking info.
+    grid: GeoDataFrame (only when return_grid=True)
+        The hexagonal grid used for blocking.
+
+    Examples
+    --------
+    >>> from fuzzy_llm_matcher import hex_block_match
+    >>>
+    >>> result, grid = hex_block_match(
+    ...     osm_gdf, geonames_gdf,
+    ...     left_on="name",  right_on="asciiname",
+    ...     hex_radius_m=10_000,           # 10 km hexagons
+    ...     projected_crs="EPSG:32648",    # UTM 48N for SE Asia
+    ...     include_neighbor_hexes=False,
+    ...     return_grid=True,
+    ... )
+    >>> # Plot: hexagons coloured by match count, on satellite background
+    >>> grid = grid.merge(
+    ...     result.groupby("left_hex_id").size().rename("n_matches"),
+    ...     left_on="hex_id", right_index=True, how="left"
+    ... )
+    >>> ax = grid.to_crs(3857).plot(column="n_matches", legend=True)
+    >>> from fuzzy_llm_matcher import add_basemap
+    >>> add_basemap(ax, style="satellite")
+    """
+    import warnings
+    import geopandas as gpd
+    from fuzzy_llm_matcher.api import match_geodataframes
+
+    # ── 1. Build the hexagonal blocking grid ─────────────────────────────────
+    combined_bounds = gpd.GeoDataFrame(
+        geometry=list(left_gdf.geometry) + (
+            list(right_gdf.geometry) if hasattr(right_gdf, "geometry") else []
+        ),
+        crs=left_gdf.crs,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        grid = create_hexagon_grid(
+            combined_bounds,
+            radius_m=hex_radius_m,
+            projected_crs=projected_crs,
+            crop=crop_grid,
+        )
+
+    # ── 2. Assign left features to hexagon cells ──────────────────────────────
+    left_hexed = assign_hex_ids(
+        left_gdf.copy(), grid,
+        how="intersects" if include_neighbor_hexes else "centroid",
+    )
+    left_hexed = left_hexed.rename(columns={"hex_id": "left_hex_id"})
+
+    if right_gdf is not None and hasattr(right_gdf, "geometry"):
+        right_hexed = assign_hex_ids(
+            right_gdf.copy(), grid,
+            how="intersects" if include_neighbor_hexes else "centroid",
+        )
+        right_hexed = right_hexed.rename(columns={"hex_id": "right_hex_id"})
+    else:
+        right_hexed = right_gdf.copy() if right_gdf is not None else None
+
+    # ── 3. Run matching blocked by hex cell ───────────────────────────────────
+    # Add a shared block column so match_geodataframes can use it
+    if "left_hex_id" in left_hexed.columns:
+        left_hexed["_hex_block"] = left_hexed["left_hex_id"].astype(str)
+
+    if right_hexed is not None and "right_hex_id" in right_hexed.columns:
+        right_hexed["_hex_block"] = right_hexed["right_hex_id"].astype(str)
+    elif right_hexed is not None:
+        right_hexed["_hex_block"] = "0"
+
+    result = match_geodataframes(
+        left_hexed, right_hexed,
+        left_on=left_on,
+        right_on=right_on,
+        left_id=left_id,
+        right_id=right_id,
+        block_on="_hex_block",          # use hex cell as blocking key
+        spatial_block_degrees=None,
+        max_distance_km=max_distance_km,
+        top_k=top_k,
+        scorer=scorer,
+        high_threshold=high_threshold,
+        medium_threshold=medium_threshold,
+        min_margin_high=min_margin_high,
+        reject_threshold=reject_threshold,
+        use_llm=use_llm,
+        llm_client=llm_client,
+        n_jobs=n_jobs,
+        return_geometry=return_geometry,
+    )
+
+    if return_grid:
+        return result, grid
+    return result
+
