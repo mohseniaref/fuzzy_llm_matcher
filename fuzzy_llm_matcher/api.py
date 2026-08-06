@@ -126,6 +126,7 @@ def match_geodataframes(
     right_on: str,
     left_id: Optional[str] = None,
     right_id: Optional[str] = None,
+    block_on: Optional[str] = None,
     spatial_block_degrees: float = 5.0,
     max_distance_km: float = 500.0,
     top_k: int = 5,
@@ -237,6 +238,12 @@ def match_geodataframes(
 
     # ── 1. Work on plain copies so we don't mutate the caller's GeoDataFrames ──
     left  = left_gdf.copy()
+    # right may be a plain DataFrame (e.g. a CSV table) — handle both cases
+    try:
+        import geopandas as _gpd
+        right_is_geo = isinstance(right_gdf, _gpd.GeoDataFrame)
+    except ImportError:
+        right_is_geo = False
     right = right_gdf.copy()
 
     # ── 2. Extract centroids (works for Point, Polygon, MultiPolygon) ─────────
@@ -248,17 +255,28 @@ def match_geodataframes(
             centroids = gdf.geometry.centroid
         return centroids.y, centroids.x  # lat, lon
 
-    left_lat, left_lon   = _centroid_lat_lon(left)
-    right_lat, right_lon = _centroid_lat_lon(right)
+    left_lat, left_lon = _centroid_lat_lon(left)
+    left["_lat"] = left_lat.values
+    left["_lon"] = left_lon.values
 
-    left["_lat"]  = left_lat.values
-    left["_lon"]  = left_lon.values
-    right["_lat"] = right_lat.values
-    right["_lon"] = right_lon.values
+    if right_is_geo:
+        right_lat, right_lon = _centroid_lat_lon(right)
+        right["_lat"] = right_lat.values
+        right["_lon"] = right_lon.values
+    else:
+        # No geometry on the right — geo distance score will be NaN
+        right["_lat"] = float("nan")
+        right["_lon"] = float("nan")
 
-    # ── 3. Spatial blocking ───────────────────────────────────────────────────
+    # ── 3. Blocking: attribute column takes priority over spatial grid ────────
     block_col: Optional[str] = None
-    if spatial_block_degrees is not None:
+    if block_on is not None:
+        # Attribute blocking: normalise values so the comparison is case-insensitive
+        from .utils import normalize_text
+        left["_attr_block"]  = left[block_on].map(normalize_text)
+        right["_attr_block"] = right[block_on].map(normalize_text)
+        block_col = "_attr_block"
+    elif spatial_block_degrees is not None:
         d = float(spatial_block_degrees)
 
         def _grid_cell(lat, lon):
@@ -580,6 +598,7 @@ def fuzzy_join_geodataframes(
     right_id: Optional[str] = None,
     how: str = "inner",
     suffixes: tuple = ("_left", "_right"),
+    block_on: Optional[str] = None,
     spatial_block_degrees: float = 5.0,
     max_distance_km: float = 500.0,
     top_k: int = 5,
@@ -666,6 +685,7 @@ def fuzzy_join_geodataframes(
         right_on=right_on,
         left_id=left_id,
         right_id=right_id,
+        block_on=block_on,
         spatial_block_degrees=spatial_block_degrees,
         max_distance_km=max_distance_km,
         top_k=top_k,
@@ -685,9 +705,12 @@ def fuzzy_join_geodataframes(
     if how == "inner":
         matches = matches[matches["final_decision"] == True].copy()
 
-    # ── 3. Prepare attribute tables (drop geometry from copies) ───────────────
+    # ── 3. Prepare attribute tables (drop geometry column from GeoDataFrames) ──
+    right_is_geo_join = hasattr(right_gdf, "geometry") and hasattr(right_gdf, "crs")
     left_attr  = pd.DataFrame(left_gdf.drop(columns=left_gdf.geometry.name))
-    right_attr = pd.DataFrame(right_gdf.drop(columns=right_gdf.geometry.name))
+    right_attr = pd.DataFrame(
+        right_gdf.drop(columns=right_gdf.geometry.name) if right_is_geo_join else right_gdf
+    )
 
     left_key  = left_id  if left_id  else "_left_idx"
     right_key = right_id if right_id else "_right_idx"
@@ -695,7 +718,6 @@ def fuzzy_join_geodataframes(
         left_attr[left_key]  = left_gdf.index
     if not right_id:
         right_attr[right_key] = right_gdf.index
-
     # Rename clashing attribute columns
     left_data  = [c for c in left_attr.columns  if c != left_key]
     right_data = [c for c in right_attr.columns if c != right_key]
@@ -728,23 +750,31 @@ def fuzzy_join_geodataframes(
 
     # ── 6. Attach geometry / geometries ──────────────────────────────────────
     if left_id:
-        left_geom_lookup  = left_gdf.set_index(left_id).geometry
+        left_geom_lookup = left_gdf.set_index(left_id).geometry
     else:
-        left_geom_lookup  = left_gdf.geometry.copy()
+        left_geom_lookup = left_gdf.geometry.copy()
         left_geom_lookup.index.name = "_left_idx"
 
-    if right_id:
-        right_geom_lookup = right_gdf.set_index(right_id).geometry
-    else:
-        right_geom_lookup = right_gdf.geometry.copy()
-        right_geom_lookup.index.name = "_right_idx"
+    # Right geometry only available when right_gdf is a GeoDataFrame
+    right_geom_lookup = None
+    if right_is_geo_join:
+        if right_id:
+            right_geom_lookup = right_gdf.set_index(right_id).geometry
+        else:
+            right_geom_lookup = right_gdf.geometry.copy()
+            right_geom_lookup.index.name = "_right_idx"
 
     if geometry in ("left", "both"):
         result["geometry"] = result["left_id"].map(left_geom_lookup)
     if geometry == "right":
-        result["geometry"] = result["right_id"].map(right_geom_lookup)
+        # Fall back to left geometry if right has no geometry
+        if right_geom_lookup is not None:
+            result["geometry"] = result["right_id"].map(right_geom_lookup)
+        else:
+            result["geometry"] = result["left_id"].map(left_geom_lookup)
     if geometry == "both":
-        result["geometry_right"] = result["right_id"].map(right_geom_lookup)
+        if right_geom_lookup is not None:
+            result["geometry_right"] = result["right_id"].map(right_geom_lookup)
         result = result.rename(columns={"geometry": "geometry_left"})
         result = gpd.GeoDataFrame(result, geometry="geometry_left", crs=left_gdf.crs)
     else:
@@ -789,6 +819,7 @@ def fuzzy_dissolve(
     right_id: Optional[str] = None,
     dissolve_op: str = "union",
     aggfunc: Optional[dict] = None,
+    block_on: Optional[str] = None,
     spatial_block_degrees: float = 5.0,
     max_distance_km: float = 500.0,
     scorer: str = "WRatio",
@@ -882,6 +913,7 @@ def fuzzy_dissolve(
         right_on=right_on,
         left_id=left_id,
         right_id=right_id,
+        block_on=block_on,
         spatial_block_degrees=spatial_block_degrees,
         max_distance_km=max_distance_km,
         top_k=5,
@@ -902,6 +934,8 @@ def fuzzy_dissolve(
         return gpd.GeoDataFrame(columns=["geometry"], crs=left_gdf.crs)
 
     # ── 2. Build geometry lookups ─────────────────────────────────────────────
+    right_is_geo_dissolve = hasattr(right_gdf, "geometry") and hasattr(right_gdf, "crs")
+
     if left_id:
         left_geom  = left_gdf.set_index(left_id).geometry
         left_attrs = left_gdf.set_index(left_id).drop(columns=left_gdf.geometry.name)
@@ -909,10 +943,16 @@ def fuzzy_dissolve(
         left_geom  = left_gdf.geometry
         left_attrs = left_gdf.drop(columns=left_gdf.geometry.name)
 
-    if right_id:
-        right_geom = right_gdf.set_index(right_id).geometry
+    if right_is_geo_dissolve:
+        if right_id:
+            right_geom = right_gdf.set_index(right_id).geometry
+        else:
+            right_geom = right_gdf.geometry
     else:
-        right_geom = right_gdf.geometry
+        # Plain DataFrame on right — no geometry available; treat as left-only
+        right_geom = None
+        if dissolve_op not in ("left", "centroid"):
+            dissolve_op = "left"  # silently fall back
 
     # ── 3. Dissolve geometry per matched pair ─────────────────────────────────
     dissolved_geoms = []
@@ -923,7 +963,7 @@ def fuzzy_dissolve(
         rid = row["right_id"]
 
         lg = left_geom.get(lid)
-        rg = right_geom.get(rid)
+        rg = right_geom.get(rid) if right_geom is not None else None
 
         if lg is None and rg is None:
             continue
