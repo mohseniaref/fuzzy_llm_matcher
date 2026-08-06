@@ -15,6 +15,12 @@ from .fuzzy_scores import (
     geo_distance_score,
     haversine_km,
 )
+from .geo_proximity import (
+    TileBasemap,
+    add_basemap,
+    combined_score,
+    sjoin_nearest_candidates,
+)
 from .llm_review import MockLLMClient, build_prompt, review_uncertain_pairs_with_llm
 from .reliability import assign_reliability, false_confident_matches
 from .simulation import simulate_dirty_entities
@@ -27,6 +33,10 @@ __all__ = [
     "fuzzy_join",
     "fuzzy_join_geodataframes",
     "fuzzy_dissolve",
+    "sjoin_nearest_candidates",
+    "combined_score",
+    "add_basemap",
+    "TileBasemap",
     "generate_candidates",
     "compute_similarity_features",
     "add_geo_distance_score",
